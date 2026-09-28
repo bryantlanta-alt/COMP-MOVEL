@@ -1,16 +1,27 @@
-package com.example.campominado // <-- MANTENHA O SEU NOME DE PACOTE AQUI
+package com.example.campominado // <-- MUDA ISTO PARA O TEU PACOTE
 
+import android.app.AlertDialog
+import android.content.Context
+import android.content.SharedPreferences
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.InputFilter
 import android.widget.Button
+import android.widget.EditText
 import android.widget.GridLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.random.Random
+
+// O "molde" para salvar os recordes
+data class Partida(val nome: String, val tempo: Int, val cliques: Int, val data: String)
 
 class MainActivity : AppCompatActivity() {
 
@@ -21,19 +32,21 @@ class MainActivity : AppCompatActivity() {
     private var tabuleiro = Array(LINHAS) { IntArray(COLUNAS) }
     private var botoes = Array(LINHAS) { Array<Button?>(COLUNAS) { null } }
     private var bandeiras = Array(LINHAS) { BooleanArray(COLUNAS) }
-
     private var jogoAtivo = true
 
-    // Estatísticas
+    // Variáveis do Jogo
     private var partidasJogadas = 0
     private var vitorias = 0
     private var derrotas = 0
-
     private var cliques = 0
-
-    // Cronómetro
     private var segundos = 0
     private var timerRodando = false
+
+    // Lista do TOP 10
+    private var rankingTop10 = mutableListOf<Partida>()
+    private lateinit var preferencias: SharedPreferences
+
+    // Cronómetro
     private val timerHandler = Handler(Looper.getMainLooper())
     private val timerRunnable = object : Runnable {
         override fun run() {
@@ -48,9 +61,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var gridLayout: GridLayout
     private lateinit var tvStatus: TextView
     private lateinit var tvEstatisticas: TextView
-
-    private lateinit var tvCliques: TextView
     private lateinit var tvTempo: TextView
+    private lateinit var tvCliques: TextView
+    private lateinit var tvHistorico: TextView
     private lateinit var btnRestart: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -60,19 +73,113 @@ class MainActivity : AppCompatActivity() {
         gridLayout = findViewById(R.id.gridLayout)
         tvStatus = findViewById(R.id.tvStatus)
         tvEstatisticas = findViewById(R.id.tvEstatisticas)
-        tvCliques = findViewById(R.id.tvCliques)
         tvTempo = findViewById(R.id.tvTempo)
+        tvCliques = findViewById(R.id.tvCliques)
+        tvHistorico = findViewById(R.id.tvHistorico)
         btnRestart = findViewById(R.id.btnRestart)
 
+        preferencias = getSharedPreferences("DadosCampoMinado", Context.MODE_PRIVATE)
+        carregarRanking()
+
         btnRestart.setOnClickListener { iniciarJogo() }
+        // Truque de desenvolvedor: Clicar no título resolve o jogo!
+        tvStatus.setOnClickListener {
+            testarVitoria()
+        }
+        // Truque para resetar: Clique longo na caixa de recordes apaga tudo
+        tvHistorico.setOnLongClickListener {
+            resetarRanking()
+            true // O 'true' avisa o Android que o clique longo foi consumido com sucesso
+        }
 
         criarTabuleiroUI()
-        iniciarJogo() // Inicia a primeira partida
+        iniciarJogo()
     }
 
-    private fun atualizarEstatisticas() {
-        tvEstatisticas.text = "🎮 Partidas: $partidasJogadas  |  🏆 Vitórias: $vitorias  |  💀 Derrotas: $derrotas"
+    // ---------------- LÓGICA DO RANKING TOP 10 ----------------
+
+    private fun pedirNomeDoJogador(tempoFinal: Int, cliquesFinais: Int) {
+        val campoTexto = EditText(this)
+        campoTexto.filters = arrayOf(InputFilter.LengthFilter(5)) // Máximo 5 letras
+        campoTexto.hint = "Ex: JOAO"
+        campoTexto.textSize = 24f
+
+        AlertDialog.Builder(this)
+            .setTitle("Novo Recorde! 🏆")
+            .setMessage("Entrou para o TOP 10!\nDigite o seu nome (máx 5 letras):")
+            .setView(campoTexto)
+            .setCancelable(false)
+            .setPositiveButton("Salvar") { _, _ ->
+                val nomeDigitado = campoTexto.text.toString().uppercase()
+                val nomeFinal = if (nomeDigitado.isBlank()) "ANON" else nomeDigitado
+                val dataAtual = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Date())
+
+                val novaPartida = Partida(nomeFinal, tempoFinal, cliquesFinais, dataAtual)
+
+                // Adiciona e ordena! (Primeiro por tempo, em caso de empate, por cliques)
+                rankingTop10.add(novaPartida)
+                rankingTop10.sortWith(compareBy({ it.tempo }, { it.cliques }))
+
+                // Mantém apenas os 10 melhores
+                if (rankingTop10.size > 10) {
+                    rankingTop10.removeAt(rankingTop10.lastIndex)
+                }
+
+                salvarRanking()
+                exibirRankingNaTela()
+            }
+            .show()
     }
+
+    private fun exibirRankingNaTela() {
+        if (rankingTop10.isEmpty()) {
+            tvHistorico.text = "Nenhum recorde ainda."
+            return
+        }
+
+        var textoFinal = ""
+        for (i in rankingTop10.indices) {
+            val p = rankingTop10[i]
+            textoFinal += "${i + 1}º | ${p.nome} | ${p.tempo}s | ${p.cliques} cliq. | ${p.data}\n"
+        }
+        tvHistorico.text = textoFinal
+    }
+
+    private fun salvarRanking() {
+        // Converte a lista para uma String gigante separada por ponto-e-vírgula e vírgula
+        val stringParaSalvar = rankingTop10.joinToString(";") {
+            "${it.nome},${it.tempo},${it.cliques},${it.data}"
+        }
+        preferencias.edit().putString("RANKING", stringParaSalvar).apply()
+    }
+
+    private fun carregarRanking() {
+        val dadosSalvos = preferencias.getString("RANKING", "") ?: ""
+        if (dadosSalvos.isNotEmpty()) {
+            val partidasSalvas = dadosSalvos.split(";")
+            for (partidaString in partidasSalvas) {
+                val partes = partidaString.split(",")
+                if (partes.size == 4) {
+                    val p = Partida(partes[0], partes[1].toInt(), partes[2].toInt(), partes[3])
+                    rankingTop10.add(p)
+                }
+            }
+        }
+        exibirRankingNaTela()
+    }
+    // Função para apagar todo o histórico de recordes
+    private fun resetarRanking() {
+        // 1. Limpa a lista no código
+        rankingTop10.clear()
+
+        // 2. Remove o texto guardado no banco de dados local
+        preferencias.edit().remove("RANKING").apply()
+
+        // 3. Atualiza a interface gráfica
+        exibirRankingNaTela()
+    }
+
+    // ---------------- FIM DA LÓGICA DO RANKING ----------------
 
     private fun iniciarCronometro() {
         timerRodando = true
@@ -86,20 +193,23 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun registrarCliques() {
-        if(jogoAtivo)
+        if (jogoAtivo) {
             cliques++
             tvCliques.text = "👆 Cliques: $cliques"
+        }
+    }
+
+    private fun atualizarEstatisticas() {
+        tvEstatisticas.text = "🎮 Partidas: $partidasJogadas  |  🏆 Vitórias: $vitorias  |  💀 Derrotas: $derrotas"
     }
 
     private fun iniciarJogo() {
         jogoAtivo = true
         partidasJogadas++
 
-        //zerar os cliques
         cliques = 0
         tvCliques.text = "👆 Cliques: 0"
 
-        // Zera o cronómetro
         pararCronometro()
         segundos = 0
         tvTempo.text = "⏳ Tempo: 0s"
@@ -123,36 +233,6 @@ class MainActivity : AppCompatActivity() {
 
         espalharMinas()
         calcularVizinhos()
-    }
-
-    // Design dos botões e lógica mantida exatamente como funcionou antes
-    private fun visualBotaoFechado(): GradientDrawable {
-        return GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = 16f
-            setColor(Color.parseColor("#3498DB"))
-            setStroke(3, Color.parseColor("#2980B9"))
-        }
-    }
-
-    private fun visualBotaoAberto(): GradientDrawable {
-        return GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = 16f
-            setColor(Color.parseColor("#ECF0F1"))
-            setStroke(2, Color.parseColor("#BDC3C7"))
-        }
-    }
-
-    private fun corDoNumero(valor: Int): Int {
-        return when (valor) {
-            1 -> Color.parseColor("#2980B9")
-            2 -> Color.parseColor("#27AE60")
-            3 -> Color.parseColor("#C0392B")
-            4 -> Color.parseColor("#8E44AD")
-            5 -> Color.parseColor("#D35400")
-            else -> Color.parseColor("#2C3E50")
-        }
     }
 
     private fun criarTabuleiroUI() {
@@ -221,8 +301,8 @@ class MainActivity : AppCompatActivity() {
     private fun alternarBandeira(l: Int, c: Int) {
         if (!jogoAtivo || !botoes[l][c]!!.isEnabled) return
 
-        // Inicia o cronómetro no primeiro clique (seja bandeira ou abrir)
         if (!timerRodando) iniciarCronometro()
+        registrarCliques()
 
         bandeiras[l][c] = !bandeiras[l][c]
 
@@ -236,15 +316,12 @@ class MainActivity : AppCompatActivity() {
     private fun cliqueCelula(l: Int, c: Int) {
         if (!jogoAtivo || !botoes[l][c]!!.isEnabled || bandeiras[l][c]) return
 
-        // Inicia o cronómetro no primeiro clique
         if (!timerRodando) iniciarCronometro()
-
         registrarCliques()
 
         val valor = tabuleiro[l][c]
 
         if (valor == -1) {
-            // Perdeu
             jogoAtivo = false
             derrotas++
             pararCronometro()
@@ -297,7 +374,31 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
+    // Função de "Trapaça" para desenvolvedor testar a vitória
+    private fun testarVitoria() {
+        if (!jogoAtivo) return
 
+        // Simula o clique e abre todos os botões que NÃO são bombas
+        for (i in 0 until LINHAS) {
+            for (j in 0 until COLUNAS) {
+                if (tabuleiro[i][j] != -1) { // Se não for bomba (-1)
+                    val botao = botoes[i][j]!!
+                    val valor = tabuleiro[i][j]
+
+                    botao.isEnabled = false
+                    botao.background = visualBotaoAberto()
+
+                    if (valor > 0) {
+                        botao.text = valor.toString()
+                        botao.setTextColor(corDoNumero(valor))
+                    }
+                }
+            }
+        }
+
+        // Após forçar a abertura de tudo, manda o jogo verificar se ganhamos
+        verificarVitoria()
+    }
     private fun verificarVitoria() {
         var botoesFechados = 0
         for (i in 0 until LINHAS) {
@@ -314,8 +415,46 @@ class MainActivity : AppCompatActivity() {
             pararCronometro()
             atualizarEstatisticas()
 
-            tvStatus.text = "Você Venceu! 🎉"
-            tvStatus.setTextColor(Color.parseColor("#27AE60"))
+            // Regra do TOP 10: Se a lista tem menos de 10 pessoas OU se o tempo foi menor que o último colocado
+            val entrouNoTop10 = rankingTop10.size < 10 || segundos < rankingTop10.last().tempo
+
+            if (entrouNoTop10) {
+                tvStatus.text = "Top 10 Alcançado! 🏆"
+                tvStatus.setTextColor(Color.parseColor("#F39C12"))
+                pedirNomeDoJogador(segundos, cliques)
+            } else {
+                tvStatus.text = "Você Venceu! 🎉"
+                tvStatus.setTextColor(Color.parseColor("#27AE60"))
+            }
+        }
+    }
+
+    private fun visualBotaoFechado(): GradientDrawable {
+        return GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = 16f
+            setColor(Color.parseColor("#3498DB"))
+            setStroke(3, Color.parseColor("#2980B9"))
+        }
+    }
+
+    private fun visualBotaoAberto(): GradientDrawable {
+        return GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = 16f
+            setColor(Color.parseColor("#ECF0F1"))
+            setStroke(2, Color.parseColor("#BDC3C7"))
+        }
+    }
+
+    private fun corDoNumero(valor: Int): Int {
+        return when (valor) {
+            1 -> Color.parseColor("#2980B9")
+            2 -> Color.parseColor("#27AE60")
+            3 -> Color.parseColor("#C0392B")
+            4 -> Color.parseColor("#8E44AD")
+            5 -> Color.parseColor("#D35400")
+            else -> Color.parseColor("#2C3E50")
         }
     }
 }
