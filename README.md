@@ -1,1 +1,1 @@
-![Uploading Captura de tela 2026-10-05 132511.png…]()
+![Tela de Vitória - Top 10 Alcançado](assets/image_1571a1.png)
